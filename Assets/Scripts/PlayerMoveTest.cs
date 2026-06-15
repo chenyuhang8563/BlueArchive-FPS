@@ -152,9 +152,11 @@ public class PlayerMoveTest : MonoBehaviour
     {
         if (!isAiming)
         {
-            float rad = Mathf.Atan2(playerMovement.x, playerMovement.z);
-            animator.SetFloat(turnSpeedHash, rad, 0.1f, Time.deltaTime);
-            tr.Rotate(0, rad * 180 * Time.deltaTime, 0f);
+            if (playerMovement.magnitude > 0.01f)
+            {
+                Quaternion targetRotation = Quaternion.LookRotation(playerMovement);
+                tr.rotation = Quaternion.Slerp(tr.rotation, targetRotation, Time.deltaTime * 10f);
+            }
         }
         else
         {
@@ -302,8 +304,15 @@ public class PlayerMoveTest : MonoBehaviour
     #region 计算输入方向
     void CalculateInputDirection()
     {
-        playerMovement = new Vector3(moveInput.x, 0, moveInput.y).normalized;
-        playerMovement = tr.InverseTransformVector(playerMovement);
+        Vector3 cameraForward = cameraTransform.forward;
+        cameraForward.y = 0;
+        cameraForward.Normalize();
+
+        Vector3 cameraRight = cameraTransform.right;
+        cameraRight.y = 0;
+        cameraRight.Normalize();
+
+        playerMovement = (cameraForward * moveInput.y + cameraRight * moveInput.x).normalized;
     }
     #endregion
 

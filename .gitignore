@@ -25,3 +25,6 @@ DotSettings
 
 # macOS
 .DS_Store
+
+.vscode
+.claude

@@ -1,40 +1,22 @@
-using System;
 using UnityEngine;
 using UnityEngine.Animations.Rigging;
 using UnityEngine.InputSystem;
-using UnityEngine.Windows;
 
 public class PlayerMoveTest : MonoBehaviour
 {
     #region Class Variables
     Animator animator;
-    [Tooltip("How far in degrees can you move the camera up")]
-    public float TopClamp = 40.0f;
-    [Tooltip("How far in degrees can you move the camera down")]
-    public float BottomClamp = -30.0f;
-    [Tooltip("For locking the camera position on all axis")]
-    public bool LockCameraPosition = false;
-    [Tooltip("Additional degress to override the camera. Useful for fine tuning camera position when locked")]
-    public float CameraAngleOverride = 0.0f;
     bool armedRifle;
     public GameObject rifleOnBack;
     public GameObject rifleInHand;
-    public GameObject CinemachineCameraTarget;
     public TwoBoneIKConstraint rightHandConstraint;
     public TwoBoneIKConstraint leftHandConstraint;
     CharacterController characterController;
     Transform tr;
     Transform cameraTransform;
 
-    // cinemachine
-    private float _cinemachineTargetYaw;
-    private float _cinemachineTargetPitch;
-    private const float _threshold = 0.01f;
-    [SerializeField] private float mouseSensitivity = 5.0f;
     [SerializeField] private LayerMask aimColliderLayerMask = new LayerMask();
     [SerializeField] private Transform debugTransform;
-    [Tooltip("独立摄像机追踪目标：不随角色旋转，只同步位置")]
-    public Transform cameraFollowTarget;
     public enum PlayerPosture
     {
         Crouch,
@@ -74,7 +56,6 @@ public class PlayerMoveTest : MonoBehaviour
     bool isCrouch;
     bool isAiming;
     bool isJumping;
-    Vector2 playerLook;
 
     int postureHash = Animator.StringToHash("Blend");
     int horizontalSpeedHash = Animator.StringToHash("Horizontal Speed");
@@ -89,10 +70,10 @@ public class PlayerMoveTest : MonoBehaviour
 
     float VerticalVelocity;
 
-    // �������߶�
+    // 最大跳跃高度
     public float maxHeight = 1f;
 
-    // �Ϳ����ҽ�״̬
+    // 脚落地动画混合状态
     float feetTween;
     Vector3 lastVelOnGround;
 
@@ -105,25 +86,13 @@ public class PlayerMoveTest : MonoBehaviour
 
     bool isGrounded;
     float groundCheckOffset = 0.5f;
-
-    public PlayerInput _playerInput;
-    private bool IsCurrentDeviceMouse
-    {
-        get
-        {
-            return _playerInput.currentControlScheme == "KeyboardMouse";
-        }
-    }
-
     #endregion
 
     #region Start
     void Start()
     {
-        _playerInput = GetComponent<PlayerInput>();
         animator = GetComponent<Animator>();
         characterController = GetComponent<CharacterController>();
-        _cinemachineTargetYaw = CinemachineCameraTarget.transform.rotation.eulerAngles.y;
         tr = transform;
         cameraTransform = Camera.main.transform;
         Cursor.lockState = CursorLockMode.Locked;
@@ -137,58 +106,13 @@ public class PlayerMoveTest : MonoBehaviour
         CalculateGravity();
         Jump();
         CalculateInputDirection();
-        AimRayCast();
         SwitchPlayerState();
         SetupAnimator();
         SetTwoHandsWeight();
     }
     #endregion
 
-    #region LateUpdate
-    private void LateUpdate()
-    {
-        CameraRotation();
-
-        // 同步 CameraFollowTarget 到玩家位置（只追踪位置，不跟旋转）
-        // 确保摄像机追踪目标始终在玩家位置但保持世界朝向
-        if (cameraFollowTarget != null)
-        {
-            cameraFollowTarget.position = tr.position;
-        }
-    }
-    #endregion
-
-    #region ���������ת
-    private void CameraRotation()
-    {
-        // if there is an input and camera position is not fixed
-        if (playerLook.sqrMagnitude >= _threshold && !LockCameraPosition)
-        {
-            //Don't multiply mouse input by Time.deltaTime;
-            float deltaTimeMultiplier = IsCurrentDeviceMouse ? 1.0f : Time.deltaTime;
-
-            _cinemachineTargetYaw += playerLook.x * deltaTimeMultiplier * mouseSensitivity;
-            _cinemachineTargetPitch -= playerLook.y * deltaTimeMultiplier * mouseSensitivity;
-        }
-
-        // clamp our rotations so our values are limited 360 degrees
-        _cinemachineTargetYaw = ClampAngle(_cinemachineTargetYaw, float.MinValue, float.MaxValue);
-        _cinemachineTargetPitch = ClampAngle(_cinemachineTargetPitch, BottomClamp, TopClamp);
-
-        // Cinemachine will follow this target
-        CinemachineCameraTarget.transform.rotation = Quaternion.Euler(_cinemachineTargetPitch + CameraAngleOverride,
-            _cinemachineTargetYaw, 0.0f);
-    }
-
-    private static float ClampAngle(float lfAngle, float lfMin, float lfMax)
-    {
-        if (lfAngle < -360f) lfAngle += 360f;
-        if (lfAngle > 360f) lfAngle -= 360f;
-        return Mathf.Clamp(lfAngle, lfMin, lfMax);
-    }
-    #endregion
-
-    #region ƽ�����
+    #region 平均速度
     Vector3 AverageVel(Vector3 newVel)
     {
         velCache[currentCacheIndex] = newVel;
@@ -203,7 +127,7 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region �������˶�
+    #region 角色运动
     private void OnAnimatorMove()
     {
         if (playerPosture != PlayerPosture.Midair)
@@ -215,7 +139,7 @@ public class PlayerMoveTest : MonoBehaviour
         }
         else
         {
-            // �������ǰ��֡��ƽ���ٶ� ��ΪdeltaPosition��֡��Ӱ�죬����Ծǰ��֡�ʲ�һ���������Ծ����ʱƫ�����
+            // 使用落地前几帧的平均速度，因为 deltaPosition 受帧率影响，落地前帧率不一致会导致跳跃落地时偏移
             averageVel.y = VerticalVelocity;
             Vector3 playerDeltaMovement = averageVel * Time.deltaTime;
             characterController.Move(playerDeltaMovement);
@@ -223,7 +147,31 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region �����������
+    #region 角色旋转
+    private void PlayerRotate()
+    {
+        if (!isAiming)
+        {
+            float rad = Mathf.Atan2(playerMovement.x, playerMovement.z);
+            animator.SetFloat(turnSpeedHash, rad, 0.1f, Time.deltaTime);
+            tr.Rotate(0, rad * 180 * Time.deltaTime, 0f);
+        }
+        else
+        {
+            Vector3 playerTargetPosition;
+            Ray ray = Camera.main.ScreenPointToRay(Mouse.current.position.ReadValue());
+            Plane hitPlane = new Plane(Vector3.up, tr.position);
+            float distance;
+            if(hitPlane.Raycast(ray, out distance))
+            {
+                playerTargetPosition = ray.GetPoint(distance);
+                tr.LookAt(playerTargetPosition);
+            }
+        }
+    }
+    #endregion
+
+    #region 玩家输入处理
     public void PlayerMove(InputAction.CallbackContext ctx)
     {
         moveInput = ctx.ReadValue<Vector2>();
@@ -248,11 +196,6 @@ public class PlayerMoveTest : MonoBehaviour
             animator.SetBool("Rifle", armedRifle);
         }
     }
-    public void PlayerLook(InputAction.CallbackContext ctx)
-    {
-        playerLook = ctx.ReadValue<Vector2>();
-    }
-
     public void PlayerCrouch(InputAction.CallbackContext ctx)
     {
         isCrouch = ctx.ReadValueAsButton();
@@ -264,7 +207,7 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region ���״̬ת��
+    #region 玩家状态切换
     void SwitchPlayerState()
     {
         if (!isGrounded)
@@ -302,7 +245,7 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region ��ؼ��
+    #region 落地检测
     void CheckGround()
     {
         if (Physics.SphereCast
@@ -320,12 +263,12 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region ��������
+    #region 重力计算
     void CalculateGravity()
     {
         if (isGrounded)
         {
-            // isGrounded �жϱ���Ҫ��һ�����µ��ٶ�
+            // isGrounded 判断需要保持一个向下的速度
             VerticalVelocity = gravity * Time.deltaTime;
             return;
         }
@@ -344,7 +287,7 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region ��Ծ
+    #region 跳跃
     void Jump()
     {
         if (isJumping && isGrounded)
@@ -356,7 +299,7 @@ public class PlayerMoveTest : MonoBehaviour
 
     #endregion
 
-    #region ������ҷ���
+    #region 计算输入方向
     void CalculateInputDirection()
     {
         playerMovement = new Vector3(moveInput.x, 0, moveInput.y).normalized;
@@ -364,57 +307,65 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region ������Ҷ���
+    #region 设置动画参数
     void SetupAnimator()
     {
         float targetSpeed = isRunning ? runSpeed : walkSpeed;
-        if (playerPosture == PlayerPosture.Stand)
+        if(!isAiming)
         {
-            animator.SetFloat(postureHash, standThreshold, 0.1f, Time.deltaTime);
-            switch (locomotionState)
+            if (playerPosture == PlayerPosture.Stand)
             {
-                case LocomotionState.Idle:
-                    animator.SetFloat(moveSpeedHash, 0, 0.1f, Time.deltaTime);
-                    break;
-                case LocomotionState.Walk:
-                    animator.SetFloat(moveSpeedHash, playerMovement.magnitude * walkSpeed, 0.1f, Time.deltaTime);
-                    break;
-                case LocomotionState.Run:
-                    animator.SetFloat(moveSpeedHash, playerMovement.magnitude * runSpeed, 0.1f, Time.deltaTime);
-                    break;
+                animator.SetFloat(postureHash, standThreshold, 0.1f, Time.deltaTime);
+                switch (locomotionState)
+                {
+                    case LocomotionState.Idle:
+                        animator.SetFloat(moveSpeedHash, 0, 0.1f, Time.deltaTime);
+                        break;
+                    case LocomotionState.Walk:
+                        animator.SetFloat(moveSpeedHash, playerMovement.magnitude * walkSpeed, 0.1f, Time.deltaTime);
+                        break;
+                    case LocomotionState.Run:
+                        animator.SetFloat(moveSpeedHash, playerMovement.magnitude * runSpeed, 0.1f, Time.deltaTime);
+                        break;
+                }
             }
-        }
-        else if (playerPosture == PlayerPosture.Crouch)
-        {
-            animator.SetFloat(postureHash, crouchThreshold, 0.1f, Time.deltaTime);
-            switch (locomotionState)
+            else if (playerPosture == PlayerPosture.Crouch)
             {
-                case LocomotionState.Idle:
-                    animator.SetFloat(moveSpeedHash, 0, 0.1f, Time.deltaTime);
-                    break;
-                default:
-                    animator.SetFloat(moveSpeedHash, playerMovement.magnitude * crouchSpeed, 0.1f, Time.deltaTime);
-                    break;
+                animator.SetFloat(postureHash, crouchThreshold, 0.1f, Time.deltaTime);
+                switch (locomotionState)
+                {
+                    case LocomotionState.Idle:
+                        animator.SetFloat(moveSpeedHash, 0, 0.1f, Time.deltaTime);
+                        break;
+                    default:
+                        animator.SetFloat(moveSpeedHash, playerMovement.magnitude * crouchSpeed, 0.1f, Time.deltaTime);
+                        break;
+                }
             }
+            else if (playerPosture == PlayerPosture.Midair)
+            {
+                animator.SetFloat(postureHash, midairThreshold);
+                animator.SetFloat(verticalSpeedHash, VerticalVelocity);
+                animator.SetFloat(feetTweenHash, feetTween);
+            }
+
         }
-        else if (playerPosture == PlayerPosture.Midair)
+        else
         {
             animator.SetFloat(postureHash, midairThreshold);
-            animator.SetFloat(verticalSpeedHash, VerticalVelocity);
-            animator.SetFloat(feetTweenHash, feetTween);
+            animator.SetFloat(horizontalSpeedHash, playerMovement.x * targetSpeed, 0.1f, Time.deltaTime);
+            animator.SetFloat(moveSpeedHash, playerMovement.z * targetSpeed, 0.1f, Time.deltaTime);
         }
-        float rad = Mathf.Atan2(playerMovement.x, playerMovement.z);
-        animator.SetFloat(turnSpeedHash, rad, 0.1f, Time.deltaTime);
-        tr.Rotate(0, rad * 180 * Time.deltaTime, 0f);
-     
+
+        PlayerRotate();
     }
     #endregion
 
-    #region ��ǹ�ͱ�ǹת��
+    #region 收枪和持枪切换
     /// <summary>
-    /// 
+    /// 切换枪在背上/在手上
     /// </summary>
-    /// <param name="index">����Ϊ1ʱǹ�ڱ��ϣ�����Ϊ0ʱǹ������</param>
+    /// <param name="index">参数为1时枪背在背上，参数为0时枪握在手上</param>
     public void PutGrabRifle(int index)
     {
         if (index == 1)
@@ -430,7 +381,7 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region ��˫��IKȨ��
+    #region 设置双手IK权重
     void SetTwoHandsWeight()
     {
         rightHandConstraint.weight = animator.GetFloat("Right Hand Weight");
@@ -438,43 +389,5 @@ public class PlayerMoveTest : MonoBehaviour
     }
     #endregion
 
-    #region ��׼�����߼�
-    private void AimRayCast()
-    {
-        Vector3 mouseWorldPosition = Vector3.zero;
-        Vector2 screenPointCenter = new Vector2(Screen.width / 2f, Screen.height / 2f);
-        Ray ray = Camera.main.ScreenPointToRay(screenPointCenter);
-        if (Physics.Raycast(ray, out RaycastHit raycastHit, 999f, aimColliderLayerMask))
-        {
-            debugTransform.position = raycastHit.point;
-            mouseWorldPosition = raycastHit.point;
-        }
-    //     if (isAiming)
-    //     {
-    //         Vector3 worldAimTarget = mouseWorldPosition;
-    //         worldAimTarget.y = transform.position.y;
-    //         Vector3 aimDirection = (worldAimTarget - transform.position).normalized;
-    //         transform.forward = Vector3.Lerp(transform.forward, aimDirection, Time.deltaTime * 20f);
-    //     }
-    }
-    #endregion
-    //private void GetPlayerMoving()
-    //{
-    //    var targetSpeed = isRunning ? runSpeed : walkSpeed;
-    //    // ��׼ʱ������λ����Ϊ��׼����
-    //    if (isAiming)
-    //    {
-    //        Vector3 dir;
-    //        dir = new Vector3(moveInput.x, 0f, moveInput.y);
-    //        //dir = tr.InverseTransformVector(dir);
-    //        float rad = Mathf.Atan2(dir.x, dir.z);
-    //        animator.SetFloat("Vertical Speed", dir.z * targetSpeed, 0.1f, Time.deltaTime);
-    //        animator.SetFloat("Horizontal Speed", dir.x * targetSpeed, 0.1f, Time.deltaTime);
-    //    }
-    //    else
-    //    {
-    //        animator.SetFloat("Vertical Speed", moveInput.magnitude * targetSpeed, 0.1f, Time.deltaTime);
-    //    }
-    //}
 
 }
